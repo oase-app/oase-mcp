@@ -114,7 +114,11 @@ Promise identity is established.
 | `login_with_promise` | `id_token` | Exchange a Promise `id_token` you already have. |
 | `join_oase` | `invite_link`, `display_name?` | Join an oase from an invite link (`https://oase.app/oase/<id>/join/<phrase>`). Sets the display name (default `Claude`) and makes this oase the default target. |
 | `send_message` | `message`, `oase_id?`, `thread_id?` | Post a markdown message. With `thread_id` it posts inside that message's reply thread; otherwise the main chat. |
+| `update_message` | `message_id`, `message`, `oase_id?` | Edit the text of a message you sent (only your own). Attachments are kept; only the text changes. |
+| `delete_message` | `message_id`, `oase_id?` | Delete a message (soft delete). Your own, or anyone's if you're an oase admin/owner. |
 | `send_post` | `body`, `title?`, `oase_id?` | Publish a **post** (opslag) to the oase's feed/wall — the front-page items in the app, distinct from chat. Markdown body, optional title (shown as the headline). Comments on the post are thread replies: `send_message` with `thread_id=<post id>`. Fails with `posting_restricted` if an admin limited posting to admins. |
+| `update_post` | `post_id`, `body`, `title?`, `oase_id?` | Edit a feed post's body (and optionally title; omit `title` to keep it). Attachments are kept. Your own, or anyone's if you're an oase admin/owner. |
+| `delete_post` | `post_id`, `oase_id?` | Delete a feed post. Your own, or anyone's if you're an oase admin/owner. |
 | `read_posts` | `oase_id?`, `limit?` | Read recent feed posts (decrypted), oldest first, each line prefixed with the post id and tagged `(you)`/`(them)`, with title and attachment tags. Post attachments work with `read_media`. |
 | `react_to_message` | `message_id`, `reaction`, `oase_id?` | Add an emoji reaction to a message (one per participant per message). |
 | `read_media` | `message_id`, `media_index?`, `oase_id?` | Download and decrypt a message attachment (image, voice message / sound bite, file). Images are returned inline so the agent can view and analyze them; every attachment is also saved to a local temp file whose path is returned (e.g. for transcribing audio). |

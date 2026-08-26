@@ -339,6 +339,68 @@ export async function runMcpServer(): Promise<void> {
   );
 
   server.registerTool(
+    "update_message",
+    {
+      title: "Edit a message you sent",
+      description:
+        "Edit the text of a chat message this agent sent earlier, replacing " +
+        "its body with new markdown. Get the message_id from send_message or " +
+        "read_messages output. Omit oase_id to use the default (last joined) " +
+        "oase. Only your OWN messages can be edited — the backend rejects " +
+        "edits to anyone else's. Any attachments on the message are kept as-is; " +
+        "only the text changes. The message must be in the recent chat history.",
+      inputSchema: {
+        message_id: z.string().describe("Id of the message to edit."),
+        message: z
+          .string()
+          .describe("The new message text (markdown supported)."),
+        oase_id: z
+          .string()
+          .optional()
+          .describe("Target oase id. Defaults to the last joined oase."),
+      },
+    },
+    async ({ message_id, message, oase_id }) => {
+      try {
+        const target = client.resolveTargetOase(oase_id);
+        await client.updateMessage(target, message_id, message);
+        return textResult(`Edited message ${message_id} in oase ${target}.`);
+      } catch (e) {
+        return textResult(`Failed to edit message: ${errText(e)}`, true);
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_message",
+    {
+      title: "Delete a message",
+      description:
+        "Delete a chat message (soft delete — it shows as removed in the app). " +
+        "Get the message_id from send_message or read_messages output. Omit " +
+        "oase_id to use the default (last joined) oase. You can delete your " +
+        "own messages; deleting someone else's requires being an oase " +
+        "admin/owner, otherwise the backend rejects it.",
+      inputSchema: {
+        message_id: z.string().describe("Id of the message to delete."),
+        oase_id: z
+          .string()
+          .optional()
+          .describe("Target oase id. Defaults to the last joined oase."),
+      },
+    },
+    async ({ message_id, oase_id }) => {
+      try {
+        const target = client.resolveTargetOase(oase_id);
+        await client.deleteMessage(target, message_id);
+        return textResult(`Deleted message ${message_id} in oase ${target}.`);
+      } catch (e) {
+        return textResult(`Failed to delete message: ${errText(e)}`, true);
+      }
+    },
+  );
+
+  server.registerTool(
     "send_post",
     {
       title: "Publish a post to an Oase's feed",
@@ -379,6 +441,74 @@ export async function runMcpServer(): Promise<void> {
             ? " Posting in this oase is restricted to admins."
             : "";
         return textResult(`Failed to post: ${errText(e)}${restricted}`, true);
+      }
+    },
+  );
+
+  server.registerTool(
+    "update_post",
+    {
+      title: "Edit a feed post",
+      description:
+        "Edit a post (opslag) on an oase's feed, replacing its body (and " +
+        "optionally its title) with new markdown. Get the post_id from " +
+        "send_post or read_posts output. Omit oase_id to use the default (last " +
+        "joined) oase. If you omit title, the post's current title is kept; " +
+        "pass title to change it (pass an empty string to clear it). Any " +
+        "attachments on the post are kept as-is. You can edit your own post; " +
+        "editing someone else's requires being an oase admin/owner. The post " +
+        "must be in the recent feed.",
+      inputSchema: {
+        post_id: z.string().describe("Id of the post to edit."),
+        body: z.string().describe("The new post body (markdown supported)."),
+        title: z
+          .string()
+          .optional()
+          .describe(
+            "New title/headline. Omit to keep the current title; empty string " +
+              "clears it.",
+          ),
+        oase_id: z
+          .string()
+          .optional()
+          .describe("Target oase id. Defaults to the last joined oase."),
+      },
+    },
+    async ({ post_id, body, title, oase_id }) => {
+      try {
+        const target = client.resolveTargetOase(oase_id);
+        await client.updatePost(target, post_id, body, title);
+        return textResult(`Edited post ${post_id} in oase ${target}.`);
+      } catch (e) {
+        return textResult(`Failed to edit post: ${errText(e)}`, true);
+      }
+    },
+  );
+
+  server.registerTool(
+    "delete_post",
+    {
+      title: "Delete a feed post",
+      description:
+        "Delete a post (opslag) from an oase's feed. Get the post_id from " +
+        "send_post or read_posts output. Omit oase_id to use the default (last " +
+        "joined) oase. You can delete your own post; deleting someone else's " +
+        "requires being an oase admin/owner, otherwise the backend rejects it.",
+      inputSchema: {
+        post_id: z.string().describe("Id of the post to delete."),
+        oase_id: z
+          .string()
+          .optional()
+          .describe("Target oase id. Defaults to the last joined oase."),
+      },
+    },
+    async ({ post_id, oase_id }) => {
+      try {
+        const target = client.resolveTargetOase(oase_id);
+        await client.deletePost(target, post_id);
+        return textResult(`Deleted post ${post_id} in oase ${target}.`);
+      } catch (e) {
+        return textResult(`Failed to delete post: ${errText(e)}`, true);
       }
     },
   );

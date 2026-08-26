@@ -683,6 +683,53 @@ export class OaseClient {
     );
   }
 
+  /**
+   * Edit one of this agent's own chat messages: re-encrypt the new text and
+   * PUT it to the message. Mirrors the app's edit (same endpoint and payload):
+   * the edited body is a fresh cipher bundle under the same oase key, and the
+   * message's existing attachments are sent back unchanged so the edit doesn't
+   * drop them (the backend overwrites media on edit). The message must be in
+   * the recent chat history so its chat_id and attachments can be recovered.
+   * The backend only lets you edit your OWN messages (it rejects others).
+   * Returns the message id.
+   */
+  async updateMessage(
+    oaseId: string,
+    messageId: string,
+    newText: string,
+  ): Promise<string> {
+    const { messages } = await this.chatEvolve(oaseId, "");
+    const msg = messages.find((m) => m.id === messageId);
+    if (!msg) {
+      throw new OaseError(
+        `Message ${messageId} isn't in the recent chat history, so it can't ` +
+          `be edited (it may be too old, deleted, or in a different oase).`,
+      );
+    }
+    const bundle = await this.encrypt(oaseId, newText);
+    const media = this.rawMediaByMessage.get(messageId) ?? [];
+    await this.authed("PUT", `v1/oases/${oaseId}/messaging/messages/${messageId}`, {
+      oase_id: oaseId,
+      chat_id: msg.chatId,
+      body_cipher_bundle: bundle,
+      media,
+    });
+    return messageId;
+  }
+
+  /**
+   * Delete a chat message. Soft-deletes it (the app shows a tombstone and the
+   * client's reads mark it `deleted`). The backend allows deleting your own
+   * message, or any message if you're an oase admin/owner; otherwise it
+   * rejects with a requires-own-or-admin error.
+   */
+  async deleteMessage(oaseId: string, messageId: string): Promise<void> {
+    await this.authed(
+      "DELETE",
+      `v1/oases/${oaseId}/messaging/messages/${messageId}`,
+    );
+  }
+
   // ---- Posts (feed/"opslag") ----------------------------------------------
 
   /**
@@ -773,6 +820,58 @@ export class OaseClient {
     }
     posts.sort((a, b) => (a.version < b.version ? -1 : a.version > b.version ? 1 : 0));
     return posts.slice(-limit);
+  }
+
+  /**
+   * Edit a feed post: re-encrypt the new body (and title) and PUT it. Mirrors
+   * the app's edit — title and body are separate cipher bundles under the oase
+   * key, and the post's existing attachments are sent back unchanged so the
+   * edit doesn't drop them (the backend overwrites body, title, and media on
+   * update). Because a missing title bundle would clear the title, when `title`
+   * is omitted the post's current title is read and preserved. The post must be
+   * in the recent feed so its title and attachments can be recovered. The
+   * backend allows editing your own post (or any, if you're an admin/owner).
+   * Returns the post id.
+   */
+  async updatePost(
+    oaseId: string,
+    postId: string,
+    body: string,
+    title?: string,
+  ): Promise<string> {
+    const posts = await this.readRecentPosts(oaseId, 100);
+    const existing = posts.find((p) => p.id === postId);
+    if (!existing) {
+      throw new OaseError(
+        `Post ${postId} isn't in the recent feed, so it can't be edited ` +
+          `(it may be too old, deleted, or in a different oase).`,
+      );
+    }
+    const newTitle = title !== undefined ? title : existing.title ?? "";
+    const [titleBundle, bodyBundle] = await Promise.all([
+      this.encrypt(oaseId, newTitle.trim()),
+      this.encrypt(oaseId, body.trim()),
+    ]);
+    const media = this.rawMediaByMessage.get(postId) ?? [];
+    await this.authed("PUT", `v1/oases/${oaseId}/messaging/posts/${postId}`, {
+      oase_id: oaseId,
+      chat_id: oaseId,
+      body_cipher_bundle: bodyBundle,
+      body_type: "markdown",
+      media,
+      type: "post",
+      title_cipher_bundle: titleBundle,
+    });
+    return postId;
+  }
+
+  /**
+   * Delete a feed post. The backend allows deleting your own post, or any post
+   * if you're an oase admin/owner; otherwise it rejects with a
+   * requires-own-or-admin error.
+   */
+  async deletePost(oaseId: string, postId: string): Promise<void> {
+    await this.authed("DELETE", `v1/oases/${oaseId}/messaging/posts/${postId}`);
   }
 
   // ---- Reading chat -------------------------------------------------------
