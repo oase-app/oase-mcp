@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Never commit local identity/secrets. The server stores its refresh token in
+# ~/.oase-mcp/config.json by default (outside the repo); these guard against a
+# custom OASE_MCP_CONFIG_DIR pointed inside the tree, or any stray token dumps.
+.oase-mcp/
+config.json
+*.env
+.env*
+*token*.txt
+captured-token.txt

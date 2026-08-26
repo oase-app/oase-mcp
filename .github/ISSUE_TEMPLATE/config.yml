@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://dev.oase.app/mcp/
+    about: Setup, tools, and how the MCP works — check here first.
+  - name: Report a security issue privately
+    url: https://github.com/oase-app/oase-mcp/security/policy
+    about: Do NOT open a public issue for vulnerabilities. Email security@oase.app (see SECURITY.md).
+  - name: Support expectations
+    url: https://github.com/oase-app/oase-mcp/blob/main/SUPPORT.md
+    about: This project is experimental and provided as-is — issues may go unanswered.
