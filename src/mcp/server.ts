@@ -70,20 +70,37 @@ function mediaHint(messages: ChatMessage[]): string {
 function chatLine(m: ChatMessage): string {
   const root = m.chatId.match(/\/m\/([^/]+)/)?.[1];
   const where = root ? ` (in thread ${root})` : "";
-  return `[${m.id}]${where} ${m.mine ? "(you)" : "(them)"}${reactionTag(m)} ${messageBody(m)}`;
+  return `[${m.id}]${where} ${m.mine ? "(you)" : "(them)"}${senderName(m)}${reactionTag(m)} ${messageBody(m)}`;
+}
+
+/** Strip characters that would break the one-line output format. */
+function cleanName(n: string): string {
+  return n.replace(/[\r\n<>{},]+/g, " ").trim();
+}
+
+/** The sender's name after the (you)/(them) tag, e.g. " <Anders>"; empty if unknown. */
+function senderName(m: ChatMessage): string {
+  const n = m.fromName ? cleanName(m.fromName) : "";
+  return n ? ` <${n}>` : "";
 }
 
 /**
- * Reactions others left on a message, e.g. " {reactions: 🟢}". A reaction is
- * often the entire reply — someone voting with an emoji instead of typing —
- * so it belongs on the line. Own reactions are marked so the agent can tell
- * its own acknowledgements apart from real answers.
+ * Reactions on a message, e.g. " {reactions: 👍 Anders, 🟢 Nana(you)}". A
+ * reaction is often the entire reply — someone voting with an emoji instead
+ * of typing — so it belongs on the line. Each entry is the emoji, then the
+ * reactor's name when known; own reactions are marked (you) so the agent can
+ * tell its own acknowledgements from real answers. Without a resolved name
+ * the entry is just the emoji (or emoji(you)), as before names existed.
  */
 function reactionTag(m: ChatMessage): string {
   const rs = (m.reactions ?? []).filter((r) => r.emoji);
   if (!rs.length) return "";
-  const shown = rs.map((r) => (r.mine ? `${r.emoji}(you)` : r.emoji));
-  return ` {reactions: ${shown.join(" ")}}`;
+  const shown = rs.map((r) => {
+    const name = r.name ? cleanName(r.name) : "";
+    if (r.mine) return name ? `${r.emoji} ${name}(you)` : `${r.emoji}(you)`;
+    return name ? `${r.emoji} ${name}` : `${r.emoji}`;
+  });
+  return ` {reactions: ${shown.join(", ")}}`;
 }
 
 const EXT_BY_MIME: Record<string, string> = {
@@ -614,9 +631,11 @@ export async function runMcpServer(): Promise<void> {
         "'in thread <rootId>' are replies — to continue that conversation, " +
         "use thread_id=<rootId>, not the reply's own id. Any id also works " +
         "as react_to_message's message_id. Reactions people left on a " +
-        "message are shown as '{reactions: 🟢 👍}' — treat them as real " +
+        "message are shown as '{reactions: 👍 Anders, 🟢 Nana(you)}' — emoji, " +
+        "then who reacted (name omitted if unknown); treat them as real " +
         "answers, since someone may vote with an emoji instead of typing; " +
-        "your own are marked '(you)'. Attachments (images, voice " +
+        "your own are marked '(you)'. A sender's name, when known, follows " +
+        "the tag: '(them) <Anders>'. Attachments (images, voice " +
         "messages, files) show as [attachment <n>: …] tags — download and " +
         "decrypt them with read_media.",
       inputSchema: {
