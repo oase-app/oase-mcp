@@ -128,3 +128,22 @@ export async function withAuthLock<T>(fn: () => Promise<T>): Promise<T> {
     await fs.rmdir(lockDir).catch(() => {});
   }
 }
+
+/**
+ * Reads KEY=value lines from `<configDir>/env` (a local, user-only file kept
+ * outside the repo, e.g. for the Transloadit key and template). Real
+ * environment variables win over this file. Missing file means no values.
+ */
+export async function loadLocalEnv(): Promise<Record<string, string>> {
+  try {
+    const raw = await fs.readFile(path.join(configDir(), "env"), "utf8");
+    const out: Record<string, string> = {};
+    for (const line of raw.split(/\r?\n/)) {
+      const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
+      if (m && !line.trim().startsWith("#")) out[m[1]] = m[2].replace(/^["']|["']$/g, "");
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}

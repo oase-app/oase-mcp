@@ -3,6 +3,7 @@ import {
   OaseConfig,
   JoinedOase,
   loadConfig,
+  loadLocalEnv,
   saveConfig,
   withAuthLock,
 } from "./config.js";
@@ -689,8 +690,10 @@ export class OaseClient {
     const service = (
       process.env.OASE_TRANSLOADIT_SERVICE || TRANSLOADIT_SERVICE
     ).replace(/\/$/, "");
-    const key = process.env.OASE_TRANSLOADIT_KEY;
-    const template = process.env.OASE_TRANSLOADIT_TEMPLATE;
+    const local = await loadLocalEnv();
+    const key = process.env.OASE_TRANSLOADIT_KEY || local.OASE_TRANSLOADIT_KEY;
+    const template =
+      process.env.OASE_TRANSLOADIT_TEMPLATE || local.OASE_TRANSLOADIT_TEMPLATE;
     if (!key || !template) {
       throw new AttachmentError(
         "Sending attachments needs OASE_TRANSLOADIT_KEY and " +

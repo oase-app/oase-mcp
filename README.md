@@ -181,7 +181,7 @@ Environment variables (all optional):
 - `OASE_MCP_CONFIG_DIR` — where to store `config.json` (default `~/.oase-mcp`).
 - `OASE_API_ROOT` — mainframe API root (default `https://api.oase.app`), e.g. point at staging.
 - `OASE_KMS_ROOT` — KMS root (default `https://kms.oase.app/`, trailing slash required).
-- `OASE_TRANSLOADIT_KEY`, `OASE_TRANSLOADIT_TEMPLATE` — **required to send attachments**: the Transloadit auth key and template id the Oase apps upload with (not shipped in this repo). `OASE_TRANSLOADIT_SERVICE` overrides the region endpoint (default EU, `https://api2-eu-west-1.transloadit.com`).
+- `OASE_TRANSLOADIT_KEY`, `OASE_TRANSLOADIT_TEMPLATE` — **required to send attachments**: the Transloadit auth key and template id the Oase apps upload with (not shipped in this repo). `OASE_TRANSLOADIT_SERVICE` overrides the region endpoint (default EU, `https://api2-eu-west-1.transloadit.com`). Instead of setting them in the MCP's environment you can keep them as `KEY=value` lines in a user-only file `~/.oase-mcp/env` (outside any repo, `chmod 600`); real environment variables win over the file.
 
 ## Sending attachments
 
