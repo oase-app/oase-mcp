@@ -36,6 +36,29 @@ function openInBrowser(url: string): void {
   }
 }
 
+/** Shared `attachments` input for send_message / send_post. */
+const attachmentsSchema = z
+  .array(
+    z.object({
+      path: z
+        .string()
+        .describe("Local file path on this machine (not a URL). Images, PDFs, any file."),
+      name: z.string().optional().describe("Filename shown to recipients. Defaults to the basename."),
+      mime: z.string().optional().describe("Mime type. Defaults to a guess from the content/extension."),
+    }),
+  )
+  .max(10)
+  .optional()
+  .describe(
+    "Files to attach (max 10, 50 MB each). Each is encrypted on this machine " +
+      "with the oase key before upload, exactly like the apps do. Use for " +
+      "images and documents; the message text may be empty when attaching.",
+  );
+
+function attachSummary(n: number): string {
+  return n ? ` with ${n} encrypted attachment${n === 1 ? "" : "s"}` : "";
+}
+
 /** "[attachment 0: image/jpeg "photo.jpg"]" tags for a message's media. */
 function attachmentTags(m: ChatMessage): string[] {
   return m.media.map(
@@ -297,9 +320,14 @@ export async function runMcpServer(): Promise<void> {
         "to a specific message or keep a conversation going. Threads are one " +
         "level deep: you cannot reply to a reply. To continue a conversation, " +
         "always thread under the root message; a reply's own id passed as " +
-        "thread_id is auto-resolved to its thread root.",
+        "thread_id is auto-resolved to its thread root. Pass attachments " +
+        "(local file paths) to send images or files; they are encrypted " +
+        "client-side like in the apps.",
       inputSchema: {
-        message: z.string().describe("The message text (markdown supported)."),
+        message: z
+          .string()
+          .describe("The message text (markdown supported). May be empty if attachments are given."),
+        attachments: attachmentsSchema,
         oase_id: z
           .string()
           .optional()
@@ -314,14 +342,17 @@ export async function runMcpServer(): Promise<void> {
           ),
       },
     },
-    async ({ message, oase_id, thread_id }) => {
+    async ({ message, attachments, oase_id, thread_id }) => {
       try {
+        if (!message.trim() && !attachments?.length) {
+          return textResult("Nothing to send: give message text or attachments.", true);
+        }
         const target = client.resolveTargetOase(oase_id);
         // Resolve here (sendMessage would too) so a redirect can be reported.
         const thread = thread_id
           ? await client.resolveThreadRoot(target, thread_id)
           : undefined;
-        const id = await client.sendMessage(target, message, thread);
+        const id = await client.sendMessage(target, message, thread, attachments);
         const where = thread ? `thread ${thread}` : "main chat";
         const note =
           thread && thread !== thread_id
@@ -330,7 +361,7 @@ export async function runMcpServer(): Promise<void> {
               `thread_id="${thread}" for this conversation from now on.)`
             : "";
         return textResult(
-          `Sent message ${id} to ${where} of oase ${target}.${note}`,
+          `Sent message ${id}${attachSummary(attachments?.length ?? 0)} to ${where} of oase ${target}.${note}`,
         );
       } catch (e) {
         return textResult(`Failed to send: ${errText(e)}`, true);
@@ -413,9 +444,11 @@ export async function runMcpServer(): Promise<void> {
         "joined) oase. Returns the post id — comments on a post are ordinary " +
         "thread replies, so send_message with thread_id=<post id> comments " +
         "on it, and react_to_message works on post ids too. Fails with " +
-        "'posting_restricted' if an admin limited posting to admins.",
+        "'posting_restricted' if an admin limited posting to admins. Optional " +
+        "attachments (local file paths) are encrypted and attached.",
       inputSchema: {
         body: z.string().describe("The post body (markdown supported)."),
+        attachments: attachmentsSchema,
         title: z
           .string()
           .optional()
@@ -426,12 +459,12 @@ export async function runMcpServer(): Promise<void> {
           .describe("Target oase id. Defaults to the last joined oase."),
       },
     },
-    async ({ body, title, oase_id }) => {
+    async ({ body, title, attachments, oase_id }) => {
       try {
         const target = client.resolveTargetOase(oase_id);
-        const id = await client.sendPost(target, body, title ?? "");
+        const id = await client.sendPost(target, body, title ?? "", attachments);
         return textResult(
-          `Published post ${id} to the feed of oase ${target}.` +
+          `Published post ${id}${attachSummary(attachments?.length ?? 0)} to the feed of oase ${target}.` +
             ` (To follow up: send_message with thread_id="${id}" comments on ` +
             `it; read_posts lists recent posts.)`,
         );

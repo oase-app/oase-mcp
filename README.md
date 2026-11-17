@@ -113,10 +113,10 @@ Promise identity is established.
 | `promise_login_finish` | — | Complete the Promise login after signing in in the browser. |
 | `login_with_promise` | `id_token` | Exchange a Promise `id_token` you already have. |
 | `join_oase` | `invite_link`, `display_name?` | Join an oase from an invite link (`https://oase.app/oase/<id>/join/<phrase>`). Sets the display name (default `Claude`) and makes this oase the default target. |
-| `send_message` | `message`, `oase_id?`, `thread_id?` | Post a markdown message. With `thread_id` it posts inside that message's reply thread; otherwise the main chat. |
+| `send_message` | `message`, `attachments?`, `oase_id?`, `thread_id?` | Post a markdown message (text may be empty when attaching). `attachments` = up to 10 `{path, name?, mime?}` local files, encrypted client-side (see "Sending attachments"). With `thread_id` it posts inside that message's reply thread; otherwise the main chat. |
 | `update_message` | `message_id`, `message`, `oase_id?` | Edit the text of a message you sent (only your own). Attachments are kept; only the text changes. |
 | `delete_message` | `message_id`, `oase_id?` | Delete a message (soft delete). Your own, or anyone's if you're an oase admin/owner. |
-| `send_post` | `body`, `title?`, `oase_id?` | Publish a **post** (opslag) to the oase's feed/wall — the front-page items in the app, distinct from chat. Markdown body, optional title (shown as the headline). Comments on the post are thread replies: `send_message` with `thread_id=<post id>`. Fails with `posting_restricted` if an admin limited posting to admins. |
+| `send_post` | `body`, `title?`, `attachments?`, `oase_id?` | Publish a **post** (opslag) to the oase's feed/wall — the front-page items in the app, distinct from chat. Markdown body, optional title (shown as the headline). Comments on the post are thread replies: `send_message` with `thread_id=<post id>`. Fails with `posting_restricted` if an admin limited posting to admins. |
 | `update_post` | `post_id`, `body`, `title?`, `oase_id?` | Edit a feed post's body (and optionally title; omit `title` to keep it). Attachments are kept. Your own, or anyone's if you're an oase admin/owner. |
 | `delete_post` | `post_id`, `oase_id?` | Delete a feed post. Your own, or anyone's if you're an oase admin/owner. |
 | `read_posts` | `oase_id?`, `limit?` | Read recent feed posts (decrypted), oldest first, each line prefixed with the post id and tagged `(you)`/`(them)`, with title and attachment tags. Post attachments work with `read_media`. |
@@ -181,13 +181,30 @@ Environment variables (all optional):
 - `OASE_MCP_CONFIG_DIR` — where to store `config.json` (default `~/.oase-mcp`).
 - `OASE_API_ROOT` — mainframe API root (default `https://api.oase.app`), e.g. point at staging.
 - `OASE_KMS_ROOT` — KMS root (default `https://kms.oase.app/`, trailing slash required).
+- `OASE_TRANSLOADIT_KEY`, `OASE_TRANSLOADIT_TEMPLATE` — **required to send attachments**: the Transloadit auth key and template id the Oase apps upload with (not shipped in this repo). `OASE_TRANSLOADIT_SERVICE` overrides the region endpoint (default EU, `https://api2-eu-west-1.transloadit.com`).
+
+## Sending attachments
+
+`send_message` and `send_post` accept `attachments: [{ path, name?, mime? }]`
+(client: `sendMessage(oaseId, text, threadId?, attachments?)`,
+`sendPost(oaseId, body, title?, attachments?)`). Same wire format as the apps:
+
+1. The file is wrapped in the `.oase` container — `[uint32 LE meta length][meta JSON {version:1, alg:"AES-GCM", kid, oaseId, ivBase64}][AES-256-GCM ciphertext][16-byte tag]` — under the oase's current key, fresh 12-byte IV.
+2. A Transloadit assembly is created from the apps' template and the container is tus-uploaded under a random name (outer mime `application/x.oase-encrypted`).
+3. The message's `media` gets `{provider:"transloadit", id:<assembly>, file:{uploadURL}, mime, originalFile:{size, width, height, name_cipher_bundle, mime_cipher_bundle}}`; the real filename and mime only travel as cipher bundles, and the backend imports the blob into storage.
+
+Local files only (no URLs), max 50 MB each (an oase admin may set a lower cap) and
+10 per message; empty files, directories and credential-looking paths
+(`~/.oase-mcp`, `~/.ssh`, `.env`, …) are refused. Mime is guessed from content/extension.
+`read_media` decrypts what was sent. Run the tests with `npm test`.
 
 ## Notes & limitations
 
 - Works on an oase's **group chat** (and per-message reply threads) and its
-  **feed posts** (`send_post`/`read_posts` — text only when sending; a post's
+  **feed posts** (`send_post`/`read_posts`; a post's
   title and body are separate cipher bundles under the same oase key). It can
-  read/decrypt media attachments (`read_media`) but not send them; it doesn't
+  send and read/decrypt attachments (`send_message`/`send_post` `attachments`,
+  `read_media`); it doesn't
   handle private 1:1 chats or realm join-approval flows.
 - **Replies can't be nested** — threads are one level deep. A `thread_id` that
   is itself a reply is silently resolved to the thread's root message (best

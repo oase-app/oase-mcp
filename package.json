@@ -26,12 +26,14 @@
   "files": [
     "dist/**/*.js",
     "dist/**/*.d.ts",
+    "!dist/**/*.test.*",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "test": "tsc && node --test dist/client/",
     "start": "node dist/index.js",
     "dev": "tsc --watch",
     "prepare": "npm run build"
