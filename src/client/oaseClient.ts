@@ -3,9 +3,19 @@ import {
   OaseConfig,
   JoinedOase,
   loadConfig,
+  loadLocalEnv,
   saveConfig,
   withAuthLock,
 } from "./config.js";
+import {
+  AttachmentError,
+  AttachmentInput,
+  LoadedAttachment,
+  MAX_ATTACHMENTS,
+  OASE_ENCRYPTED_MIME,
+  encryptContainer,
+  loadAttachment,
+} from "./attachments.js";
 
 /**
  * A cipher bundle is the encrypted-payload envelope the Oase backend stores
@@ -29,7 +39,15 @@ export interface CipherBundle {
  *   [4-byte uint32 LE metadata length][metadata JSON][ciphertext][16-byte GCM tag]
  * where metadata = { version: 1, alg: 'AES-GCM', kid, oaseId, ivBase64 }.
  */
-const OASE_ENCRYPTED_MIME = "application/x.oase-encrypted";
+/**
+ * Transloadit settings. The apps ship a client-side auth key and a template
+ * (oase-app configureUppy.ts) that stores the file for the backend to import;
+ * they are deliberately not hardcoded in this public repo. Set
+ * OASE_TRANSLOADIT_KEY and OASE_TRANSLOADIT_TEMPLATE (optionally
+ * OASE_TRANSLOADIT_SERVICE; default is the apps' EU region).
+ */
+const TRANSLOADIT_SERVICE = "https://api2-eu-west-1.transloadit.com";
+const TUS_CHUNK_BYTES = 5 * 1024 * 1024;
 
 /** Backend caps uploads around 51 MB; refuse anything wildly beyond that. */
 const MAX_MEDIA_BYTES = 64 * 1024 * 1024;
@@ -603,6 +621,149 @@ export class OaseClient {
     };
   }
 
+  // ---- Sending attachments --------------------------------------------------
+
+  /**
+   * Encrypt and upload local files the way the apps do, returning the `media`
+   * items to put on a message/post. Per file: (1) wrap the bytes in a `.oase`
+   * container (AES-256-GCM under the oase's current key), (2) create a
+   * Transloadit assembly from the app's template and tus-upload the container
+   * (outer mime application/x.oase-encrypted), (3) describe it as
+   * { provider: "transloadit", id: <assembly>, file: { uploadURL }, mime,
+   *   originalFile: { size, width, height, name_cipher_bundle,
+   *   mime_cipher_bundle } } — the backend then pulls the blob into storage.
+   * The real filename and mime only ever travel as cipher bundles.
+   */
+  async uploadAttachments(
+    oaseId: string,
+    inputs: AttachmentInput[],
+  ): Promise<Array<Record<string, unknown>>> {
+    if (inputs.length === 0) return [];
+    if (inputs.length > MAX_ATTACHMENTS) {
+      throw new AttachmentError(
+        `Too many attachments (${inputs.length}; limit ${MAX_ATTACHMENTS}).`,
+      );
+    }
+    const loaded: LoadedAttachment[] = [];
+    for (const input of inputs) loaded.push(await loadAttachment(input));
+    const items: Array<Record<string, unknown>> = [];
+    for (const file of loaded) items.push(await this.uploadOne(oaseId, file));
+    return items;
+  }
+
+  private async uploadOne(
+    oaseId: string,
+    file: LoadedAttachment,
+  ): Promise<Record<string, unknown>> {
+    const key = await this.fetchRawKey(oaseId, "current");
+    const container = encryptContainer(
+      file.data,
+      Buffer.from(key.base64, "base64"),
+      oaseId,
+      key.kid,
+    );
+    // Random stand-in name: the real one must not leak to Transloadit/storage.
+    const anon = crypto.randomBytes(9).toString("hex");
+    const uploadName = `${oaseId}.${anon}.oase`;
+    const { assemblyId, uploadURL } = await this.tusUpload(container, uploadName);
+    const originalFile: Record<string, unknown> = {
+      size: file.data.length,
+      name_cipher_bundle: await this.encrypt(oaseId, file.name),
+      mime_cipher_bundle: await this.encrypt(oaseId, file.mime),
+    };
+    if (file.width) originalFile.width = file.width;
+    if (file.height) originalFile.height = file.height;
+    return {
+      provider: "transloadit",
+      id: assemblyId,
+      file: { uploadURL },
+      mime: OASE_ENCRYPTED_MIME,
+      originalFile,
+    };
+  }
+
+  /** Create a Transloadit assembly and tus-upload `body` to it. */
+  private async tusUpload(
+    body: Buffer,
+    filename: string,
+  ): Promise<{ assemblyId: string; uploadURL: string }> {
+    const service = (
+      process.env.OASE_TRANSLOADIT_SERVICE || TRANSLOADIT_SERVICE
+    ).replace(/\/$/, "");
+    const local = await loadLocalEnv();
+    const key = process.env.OASE_TRANSLOADIT_KEY || local.OASE_TRANSLOADIT_KEY;
+    const template =
+      process.env.OASE_TRANSLOADIT_TEMPLATE || local.OASE_TRANSLOADIT_TEMPLATE;
+    if (!key || !template) {
+      throw new AttachmentError(
+        "Sending attachments needs OASE_TRANSLOADIT_KEY and " +
+          "OASE_TRANSLOADIT_TEMPLATE in the MCP server's environment " +
+          "(the same Transloadit key/template the Oase apps use).",
+      );
+    }
+    const form = new FormData();
+    form.set(
+      "params",
+      JSON.stringify({
+        auth: { key },
+        template_id: template,
+      }),
+    );
+    form.set("tus_num_expected_upload_files", "1");
+    const asm = await this.json<{
+      assembly_id: string;
+      assembly_ssl_url: string;
+      tus_url: string;
+    }>(
+      await this.raw(`${service}/assemblies`, { method: "POST", body: form }),
+      "Transloadit create assembly",
+    );
+    if (!asm.tus_url || !asm.assembly_ssl_url) {
+      throw new OaseError("Transloadit returned no tus_url for the assembly.");
+    }
+    const b64 = (v: string) => Buffer.from(v, "utf8").toString("base64");
+    const create = await this.raw(asm.tus_url, {
+      method: "POST",
+      headers: {
+        "tus-resumable": "1.0.0",
+        "upload-length": String(body.length),
+        "upload-metadata": [
+          `assembly_url ${b64(asm.assembly_ssl_url)}`,
+          `fieldname ${b64("file")}`,
+          `filename ${b64(filename)}`,
+          `name ${b64(filename)}`,
+          `type ${b64(OASE_ENCRYPTED_MIME)}`,
+          `filetype ${b64(OASE_ENCRYPTED_MIME)}`,
+        ].join(","),
+      },
+    });
+    if (!create.ok) {
+      throw new OaseError(`Upload create failed (${create.status}).`, create.status);
+    }
+    const location = create.headers.get("location");
+    if (!location) throw new OaseError("Upload create returned no Location.");
+    const uploadURL = new URL(location, asm.tus_url).toString();
+    let offset = 0;
+    while (offset < body.length) {
+      const chunk = body.subarray(offset, offset + TUS_CHUNK_BYTES);
+      const res = await this.raw(uploadURL, {
+        method: "PATCH",
+        headers: {
+          "tus-resumable": "1.0.0",
+          "content-type": "application/offset+octet-stream",
+          "upload-offset": String(offset),
+        },
+        body: chunk,
+      });
+      if (!res.ok) {
+        throw new OaseError(`Upload failed (${res.status}).`, res.status);
+      }
+      const next = Number(res.headers.get("upload-offset"));
+      offset = Number.isFinite(next) && next > offset ? next : offset + chunk.length;
+    }
+    return { assemblyId: asm.assembly_id, uploadURL };
+  }
+
   // ---- Profile & messaging ------------------------------------------------
 
   async setDisplayName(oaseId: string, name: string): Promise<void> {
@@ -646,7 +807,10 @@ export class OaseClient {
     oaseId: string,
     message: string,
     threadMessageId?: string,
+    attachments: AttachmentInput[] = [],
   ): Promise<string> {
+    // Validate and upload first, so a bad file fails before anything is sent.
+    const media = await this.uploadAttachments(oaseId, attachments);
     if (threadMessageId) {
       threadMessageId = await this.resolveThreadRoot(oaseId, threadMessageId);
     }
@@ -659,7 +823,7 @@ export class OaseClient {
         chat_id: chatId,
         body_cipher_bundle: bundle,
         body_type: "markdown",
-        media: [],
+        media,
       },
     );
     return res.id;
@@ -749,7 +913,9 @@ export class OaseClient {
     oaseId: string,
     body: string,
     title = "",
+    attachments: AttachmentInput[] = [],
   ): Promise<string> {
+    const media = await this.uploadAttachments(oaseId, attachments);
     const [titleBundle, bodyBundle] = await Promise.all([
       this.encrypt(oaseId, title.trim()),
       this.encrypt(oaseId, body.trim()),
@@ -761,7 +927,7 @@ export class OaseClient {
         chat_id: oaseId,
         body_cipher_bundle: bodyBundle,
         body_type: "markdown",
-        media: [],
+        media,
         type: "post",
         title_cipher_bundle: titleBundle,
       },

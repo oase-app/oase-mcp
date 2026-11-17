@@ -27,3 +27,9 @@ export {
   type JoinedOase,
   type OaseConfig,
 } from "./config.js";
+export {
+  AttachmentError,
+  MAX_ATTACHMENTS,
+  MAX_UPLOAD_BYTES,
+  type AttachmentInput,
+} from "./attachments.js";
