@@ -122,7 +122,7 @@ Promise identity is established.
 | `read_posts` | `oase_id?`, `limit?` | Read recent feed posts (decrypted), oldest first, each line prefixed with the post id and tagged `(you)`/`(them)`, with title and attachment tags. Post attachments work with `read_media`. |
 | `react_to_message` | `message_id`, `reaction`, `oase_id?` | Add an emoji reaction to a message (one per participant per message). |
 | `read_media` | `message_id`, `media_index?`, `oase_id?` | Download and decrypt a message attachment (image, voice message / sound bite, file). Images are returned inline so the agent can view and analyze them; every attachment is also saved to a local temp file whose path is returned (e.g. for transcribing audio). |
-| `read_messages` | `oase_id?`, `limit?` | Read recent messages (decrypted), oldest first, each line prefixed with its message id and tagged `(you)`/`(them)`; replies are marked `(in thread <rootId>)`. Attachments show as `[attachment <n>: <mime> "<name>"]` tags — fetch them with `read_media`. |
+| `read_messages` | `oase_id?`, `limit?` | Read recent messages (decrypted), oldest first, each line prefixed with its message id and tagged `(you)`/`(them)` (followed by `<Name>` when the sender's name is known); reactions show as `{reactions: 👍 Anders, 🟢 Nana(you)}` (emoji, then who reacted; name omitted if it can't be resolved; your own are marked `(you)`); replies are marked `(in thread <rootId>)`. Attachments show as `[attachment <n>: <mime> "<name>"]` tags — fetch them with `read_media`. |
 | `list_oases` | — | Show Claude's Oase identity and joined oases. |
 | `set_name` | `display_name`, `oase_id?` | Change the display name Claude posts under. |
 

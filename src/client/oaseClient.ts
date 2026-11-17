@@ -249,6 +249,8 @@ export interface ChatMessage {
   reactedByMe: boolean;
   /** Reactions on the message, emojis decrypted where possible. */
   reactions: MessageReaction[];
+  /** Sender's display name, when it could be resolved (optional, additive). */
+  fromName?: string;
   /** Attachments (images, voice messages, files) — fetch via fetchMedia. */
   media: MediaAttachment[];
 }
@@ -260,6 +262,8 @@ export interface MessageReaction {
   mine: boolean;
   /** Decrypted emoji, or undefined if it couldn't be decrypted. */
   emoji?: string;
+  /** Reacting participant's display name, when it could be resolved. */
+  name?: string;
 }
 
 export class OaseClient {
@@ -269,6 +273,8 @@ export class OaseClient {
   private keyCache = new Map<string, RawKey>();
   /** My participant_id per oase. */
   private participantCache = new Map<string, string>();
+  /** Participant names per oase (participant_id → name); see resolveNames. */
+  private nameCache = new Map<string, Map<string, string>>();
   /** Message id → root id of the thread it lives in (itself for main-chat messages). */
   private threadRoots = new Map<string, string>();
   /** Message id → raw media items (with signed URLs) from the latest read. */
@@ -1057,6 +1063,61 @@ export class OaseClient {
   }
 
   /**
+   * Resolve participant ids to display names via the participants roster
+   * projection (`participants/projections/list/evolve`, the same one the apps
+   * use). Names arrive as cipher bundles under the oase key and are decrypted
+   * like message bodies. Cached per oase; if an id is missing from the cache
+   * the roster is refetched once. Never throws: unresolved ids are simply
+   * absent from the result.
+   */
+  async resolveNames(
+    oaseId: string,
+    ids: Iterable<string>,
+  ): Promise<Map<string, string>> {
+    const wanted = [...new Set([...ids].filter(Boolean))];
+    const out = new Map<string, string>();
+    if (!wanted.length) return out;
+    try {
+      let cache = this.nameCache.get(oaseId);
+      if (!cache || wanted.some((id) => !cache!.has(id))) {
+        cache = await this.refreshRoster(oaseId, cache);
+        this.nameCache.set(oaseId, cache);
+      }
+      for (const id of wanted) {
+        const n = cache.get(id);
+        if (n) out.set(id, n);
+      }
+    } catch (e) {
+      log("participant name lookup failed:", (e as Error).message);
+    }
+    return out;
+  }
+
+  private async refreshRoster(
+    oaseId: string,
+    prev: Map<string, string> = new Map(),
+  ): Promise<Map<string, string>> {
+    const res = await this.authed<{ collection?: Array<Record<string, unknown>> }>(
+      "GET",
+      `v1/oases/${oaseId}/participants/projections/list/evolve?from_version=`,
+    );
+    const next = new Map(prev);
+    for (const p of res.collection ?? []) {
+      const id = String(p.participant_id ?? p.id ?? "");
+      if (!id) continue;
+      if (p.deleted_at) {
+        next.delete(id);
+        continue;
+      }
+      const name =
+        (await this.decryptBundleSafe(oaseId, p.participant_name_cipher_bundle)) ??
+        asString(p.participant_name);
+      if (name && name.trim()) next.set(id, name.trim());
+    }
+    return next;
+  }
+
+  /**
    * Fetch chat messages newer than `fromVersion` (pass "" for a baseline that
    * returns the latest page and the current cursor). Returns decoded, decrypted
    * messages sorted oldest→newest, plus the new cursor.
@@ -1155,6 +1216,20 @@ export class OaseClient {
         reactions: decodedReactions,
         media,
       });
+    }
+    const names = await this.resolveNames(oaseId, [
+      ...decoded.map((m) => m.from),
+      ...decoded.flatMap((m) => m.reactions.map((r) => r.by)),
+    ]);
+    if (names.size) {
+      for (const m of decoded) {
+        const fromName = names.get(m.from);
+        if (fromName) m.fromName = fromName;
+        for (const r of m.reactions) {
+          const n = names.get(r.by);
+          if (n) r.name = n;
+        }
+      }
     }
     decoded.sort((a, b) => (a.version < b.version ? -1 : a.version > b.version ? 1 : 0));
     return { toVersion: res.to_version ?? fromVersion, messages: decoded };
